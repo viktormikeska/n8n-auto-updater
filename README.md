@@ -62,7 +62,3 @@ Run it daily (or on whatever cadence you prefer) with cron:
 
 - The script does not use `set -e`; it checks the exit status of each critical command (GitHub API call, `docker exec`, `docker compose pull/up`) explicitly and sends a Telegram alert before exiting on failure.
 - `.env` is gitignored — never commit real credentials.
-
-## License
-
-MIT
