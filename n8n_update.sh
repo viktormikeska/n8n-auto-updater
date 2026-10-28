@@ -20,6 +20,7 @@ TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
 COMPOSE_DIR="${N8N_COMPOSE_DIR:-/root/automation}"
 N8N_URL="${N8N_URL:-https://localhost}"
 CONTAINER_NAME="${N8N_CONTAINER_NAME:-n8n}"
+IMAGE_CLEANUP="${N8N_IMAGE_CLEANUP:-true}"
 MAX_RETRIES=18
 RETRY_INTERVAL=10
 
@@ -50,6 +51,51 @@ wait_for_n8n() {
     echo "n8n is ready."
 }
 
+# Remove old n8n images that are not used by the running container.
+# Only touches images from the same repository as the container's image; never aborts the script.
+# Sets REMOVED_IMAGES to the number of images removed.
+REMOVED_IMAGES=0
+cleanup_old_images() {
+    REMOVED_IMAGES=0
+    if [ "$IMAGE_CLEANUP" != "true" ]; then
+        echo "Image cleanup disabled (N8N_IMAGE_CLEANUP=$IMAGE_CLEANUP)."
+        return
+    fi
+
+    local image_ref current_id repo id
+    image_ref=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null)
+    current_id=$(docker inspect --format '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null)
+    if [ -z "$image_ref" ] || [ -z "$current_id" ]; then
+        echo "WARNING: Could not inspect the '$CONTAINER_NAME' container, skipping image cleanup." >&2
+        return
+    fi
+
+    # Strip digest and tag (keeping a registry port like host:5000/n8n intact)
+    repo="${image_ref%@*}"
+    if [[ "${repo##*/}" == *:* ]]; then
+        repo="${repo%:*}"
+    fi
+
+    echo "Removing old images of $repo..."
+    for id in $(docker images --no-trunc --format '{{.ID}}' "$repo" | sort -u); do
+        [ "$id" = "$current_id" ] && continue
+        if docker rmi "$id" >/dev/null 2>&1; then
+            REMOVED_IMAGES=$((REMOVED_IMAGES + 1))
+            echo "Removed image $id"
+        else
+            echo "WARNING: Could not remove image $id (it may be used by another container)" >&2
+        fi
+    done
+    echo "Removed $REMOVED_IMAGES old image(s)."
+}
+
+# Telegram message line about cleaned-up images (empty if nothing was removed)
+cleanup_note() {
+    if [ "$REMOVED_IMAGES" -gt 0 ]; then
+        printf '\n\n🧹 Removed %s old n8n image(s).' "$REMOVED_IMAGES"
+    fi
+}
+
 # Get latest n8n version from GitHub
 LATEST_VERSION=$(curl -sf https://api.github.com/repos/n8n-io/n8n/releases/latest | grep tag_name | cut -d'"' -f4 | sed 's/n8n@//')
 if [ -z "$LATEST_VERSION" ]; then
@@ -76,11 +122,12 @@ echo "Latest version:  $LATEST_VERSION"
 # Check if update is needed
 if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
     echo "n8n is already up to date."
+    cleanup_old_images
     send_telegram "✅ *n8n is up to date!*
 
 Current version: _${CURRENT_VERSION}_
 
-No action required."
+No action required.$(cleanup_note)"
     exit 0
 fi
 
@@ -124,11 +171,12 @@ while [ "$RETRIES" -lt "$MAX_RETRIES" ]; do
     if [ "$NEW_VERSION" = "$LATEST_VERSION" ]; then
         echo "Update successful: $NEW_VERSION"
         wait_for_n8n
+        cleanup_old_images
         send_telegram "✅ *n8n updated successfully!*
 
 New version: _${NEW_VERSION}_
 
-n8n is now up to date."
+n8n is now up to date.$(cleanup_note)"
         exit 0
     fi
 
