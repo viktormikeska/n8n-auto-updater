@@ -10,8 +10,9 @@ A small bash script that automatically checks for new [n8n](https://n8n.io) rele
    - Sends a Telegram notification that an update is starting.
    - Pulls the new image and restarts the container via `docker compose`.
    - Waits for n8n to become healthy again.
+   - Removes old n8n images to free disk space.
    - Sends a Telegram notification on success or failure.
-4. If already up to date, sends a short confirmation message (or you can disable that notification if you'd rather stay quiet).
+4. If already up to date, removes any leftover old n8n images and sends a short confirmation message (or you can disable that notification if you'd rather stay quiet).
 
 ## Requirements
 
@@ -39,6 +40,7 @@ A small bash script that automatically checks for new [n8n](https://n8n.io) rele
    | `N8N_COMPOSE_DIR`     | Directory containing your `docker-compose.yml`            | `/root/automation`        |
    | `N8N_URL`             | Base URL used to check n8n's health endpoint              | `https://localhost`       |
    | `N8N_CONTAINER_NAME`  | Name of the running n8n Docker container                  | `n8n`                     |
+   | `N8N_IMAGE_CLEANUP`   | Remove old n8n images after each run (`true`/`false`)     | `true`                    |
 
 3. Make the script executable:
    ```bash
@@ -61,4 +63,5 @@ Run it daily (or on whatever cadence you prefer) with cron:
 ## Notes
 
 - The script does not use `set -e`; it checks the exit status of each critical command (GitHub API call, `docker exec`, `docker compose pull/up`) explicitly and sends a Telegram alert before exiting on failure.
+- Image cleanup only removes images from the same repository as the running n8n container (e.g. `docker.n8n.io/n8nio/n8n`), never the image currently in use, and never images of other services. It is skipped when an update fails, so the previous image is still available for a manual rollback. Images still used by another container are left in place with a warning.
 - `.env` is gitignored — never commit real credentials.
